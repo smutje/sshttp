@@ -2,7 +2,7 @@ package sshttp
 
 import (
   "testing"
-  //"net"
+  "net"
   "runtime/debug"
   "io"
   "net/http"
@@ -31,27 +31,28 @@ func genKey() ssh.Signer {
 var (
   sKey ssh.Signer
   cKey ssh.Signer
+  sConf ssh.ServerConfig
+  cConf ssh.ClientConfig
 )
 
 func init(){
   sKey = genKey()
   cKey = genKey()
-}
-
-func TestSimpleHttp(t *testing.T){
-  conf := ssh.ServerConfig{
+  sConf = ssh.ServerConfig{
     PublicKeyCallback: AcceptPublicKey(cKey.PublicKey()),
   }
-  conf.AddHostKey(sKey)
-  /*l,err := net.Listen("unix",tmpSock)
-  if err != nil {
-    t.Fatal(err)
-  }*/
-  l := Listen()
-  srv := Server{
-    Handler: http.HandlerFunc(func(wr http.ResponseWriter,req *http.Request){
-      wr.WriteHeader(204)
-    }),
+  sConf.AddHostKey(sKey)
+  cConf = ssh.ClientConfig{
+    User: "user",
+    Auth: []ssh.AuthMethod{
+      ssh.PublicKeys(cKey),
+    },
+  }
+}
+
+func genServer(f func(wr http.ResponseWriter,req *http.Request),t *testing.T) *Server{
+  return &Server{
+    Handler: http.HandlerFunc(f),
     ErrorHandler: func(err error){
       if err == io.EOF {
         t.Log("Ignoring EOF")
@@ -60,32 +61,63 @@ func TestSimpleHttp(t *testing.T){
         t.Error(err)
       }
     },
-    SSHConfig: &conf,
+    SSHConfig: &sConf,
   }
+}
+
+func TestSimpleHttp(t *testing.T){
+  l := Listen()
+  srv := genServer(
+    func(wr http.ResponseWriter,req *http.Request){
+      wr.WriteHeader(204)
+    },t)
   go srv.ServeNoClose(l)
   con, err := l.Connect()
   if err != nil {
     t.Fatal(err)
   }
-  cl,err := Dial(con,&ssh.ClientConfig{
-    User: "user",
-    Auth: []ssh.AuthMethod{
-      ssh.PublicKeys(cKey),
-    },
-  })
+  cl,err := Dial(con,&cConf)
   if err != nil {
     t.Fatal(err)
   }
-  rt := &ClientRoundTripper{Client: cl}
-  req,err := http.NewRequest("GET","/foo",nil)
-  res,err := rt.RoundTrip(req)
-  if err != nil {
-    t.Fatal(err)
-  }
-  if res.StatusCode != 204 {
-    t.Fatalf("Wrong statuscode: %d",res.StatusCode)
+  rt := &ClientRoundTripper{Client: cl, PoolSize: 5}
+  for i := 0 ; i < 10 ; i++ {
+    req,err := http.NewRequest("GET","/foo",nil)
+    res,err := rt.RoundTrip(req)
+    if err != nil {
+      t.Fatal(err)
+    }
+    if res.StatusCode != 204 {
+      t.Fatalf("Wrong statuscode: %d",res.StatusCode)
+    }
   }
   cl.Close()
   l.Close()
   srv.Shutdown()
 }
+
+func TestRealRoundtripper(t *testing.T){
+  l,err := net.Listen("tcp","localhost:2280")
+  if err != nil {
+    t.Fatal(err)
+  }
+  srv := genServer(
+    func(wr http.ResponseWriter,req *http.Request){
+      wr.WriteHeader(204)
+    },t)
+  go srv.ServeNoClose(l)
+  rt := &RoundTripper{Config: &cConf}
+  for i := 0 ; i < 10 ; i++ {
+    req,err := http.NewRequest("GET","sshttp://localhost:2280/foo",nil)
+    res,err := rt.RoundTrip(req)
+    if err != nil {
+      t.Fatal(err)
+    }
+    if res.StatusCode != 204 {
+      t.Fatalf("Wrong statuscode: %d",res.StatusCode)
+    }
+  }
+  l.Close()
+  srv.Shutdown()
+}
+

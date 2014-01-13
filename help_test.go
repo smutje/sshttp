@@ -48,10 +48,6 @@ func (p *syncBuffer) Write(b []byte) (n int,err error) {
   return
 }
 
-func (p *syncBuffer) WriteTimeout(b []byte, cancel chan interface{}) (n int, err error) {
-  
-}
-
 func (p *syncBuffer) Read(b []byte) (n int,err error) {
   p.Cond.L.Lock()
   defer p.Cond.L.Unlock()
@@ -86,7 +82,6 @@ func (p *syncBuffer) Close() error {
 func (p *syncBuffer) IsClosed() bool {
   return p.closed
 }
-
 
 func newSyncBuffer() *syncBuffer{
   var mux sync.Mutex

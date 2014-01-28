@@ -2,19 +2,22 @@ package sshttp
 
 import (
   "time"
-  "fmt"
   "sync"
-  "io"
-  "bufio"
   "net"
-  "net/http"
   "code.google.com/p/gosshnew/ssh"
 )
+
+type ServerChannel interface {
+  Accept() bool
+  HandleError(error) bool
+}
+
+type ChannelHandler func(srv ServerChannel, ch ssh.NewChannel)
 
 type Server struct {
   Addr           string
   SSHConfig      *ssh.ServerConfig
-  Handler        http.Handler
+  Handler        ChannelHandler
   ErrorHandler   func(error)
 
   wg             sync.WaitGroup
@@ -38,7 +41,7 @@ func tempError(err error) bool {
   return ok && ne.Temporary()
 }
 
-func (srv *Server) handleError(err error) bool{
+func (srv *Server) HandleError(err error) bool{
   if tempError(err) {
     time.Sleep(2*time.Millisecond)
     return false
@@ -48,6 +51,10 @@ func (srv *Server) handleError(err error) bool{
     }
     return true
   }
+}
+
+func (srv *Server) Accept() bool {
+  return srv.accept
 }
 
 func (srv *Server) Serve(l net.Listener) error {
@@ -60,9 +67,6 @@ func (srv *Server) Serve(l net.Listener) error {
 }
 
 func (srv *Server) ServeNoClose(l net.Listener) error {
-  if srv.Handler == nil {
-    srv.Handler = http.DefaultServeMux
-  }
   srv.accept = true
   for{
     con, err := l.Accept()
@@ -87,7 +91,7 @@ func (srv *Server) newClient(c net.Conn){
   con, chch, reqch, err := ssh.NewServerConn(c, srv.SSHConfig)
   defer con.Close()
   if err != nil {
-    srv.handleError(err)
+    srv.HandleError(err)
     return
   }
   srv.wg.Add(1)
@@ -98,7 +102,7 @@ func (srv *Server) newClient(c net.Conn){
       if ch == nil {
         return
       }else if srv.accept {
-        go srv.newChannel(ch)
+        go srv.Handler(srv,ch)
       }else{
         go srv.rejectChannel(ch)
       }
@@ -113,59 +117,7 @@ func (srv *Server) newClient(c net.Conn){
 func (srv *Server) rejectChannel(ch ssh.NewChannel){
   err := ch.Reject(ssh.Prohibited, "closed")
   if err != nil {
-    srv.handleError(err)
+    srv.HandleError(err)
   }
-}
-
-func (srv *Server) newChannel(nch ssh.NewChannel){
-  var err error
-  if nch.ChannelType() != "http" {
-    err = nch.Reject(ssh.UnknownChannelType, "unknown channel type")
-    if err != nil {
-      srv.handleError(err)
-    }
-    return
-  }
-  ch, _, err := nch.Accept()
-  defer ch.Close()
-  rd := bufio.NewReader(ch)
-  for{
-    if !srv.accept {
-      return
-    }
-    req, err := http.ReadRequest(rd)
-    if err != nil {
-      if srv.handleError(err) {
-        return
-      }else{
-        continue
-      }
-    }
-    srv.Handler.ServeHTTP(&sshResponseWriter{out: ch, header: make(http.Header)}, req)
-  }
-}
-
-type sshResponseWriter struct{
-  out io.ReadWriteCloser
-  headerWritten bool
-  header http.Header
-}
-
-func (w *sshResponseWriter) Header() http.Header {
-  return w.header
-}
-func (w *sshResponseWriter) WriteHeader(status int) {
-  if !w.headerWritten {
-    io.WriteString(w.out, fmt.Sprintf("HTTP/1.1 %d %s\n", status, http.StatusText(status)))
-    w.header.Write(w.out)
-    io.WriteString(w.out,"\r\n\r\n")
-    w.headerWritten = true
-  }
-}
-func (w *sshResponseWriter) Write(b []byte) (int, error) {
-  if !w.headerWritten {
-    w.WriteHeader(http.StatusOK)
-  }
-  return w.out.Write(b)
 }
 

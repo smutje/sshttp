@@ -50,9 +50,9 @@ func init(){
   }
 }
 
-func genServer(f func(wr http.ResponseWriter,req *http.Request),t *testing.T) *Server{
+func genServer(h ChannelHandler,t *testing.T) *Server{
   return &Server{
-    Handler: http.HandlerFunc(f),
+    Handler: h,
     ErrorHandler: func(err error){
       if err == io.EOF {
         t.Log("Ignoring EOF")
@@ -68,9 +68,10 @@ func genServer(f func(wr http.ResponseWriter,req *http.Request),t *testing.T) *S
 func TestSimpleHttp(t *testing.T){
   l := Listen()
   srv := genServer(
-    func(wr http.ResponseWriter,req *http.Request){
-      wr.WriteHeader(204)
-    },t)
+    HttpHandlerFunc(func(wr http.ResponseWriter,req *http.Request){
+      wr.WriteHeader(200)
+      io.WriteString(wr,"bar")
+    }),t)
   go srv.ServeNoClose(l)
   con, err := l.Connect()
   if err != nil {
@@ -87,8 +88,15 @@ func TestSimpleHttp(t *testing.T){
     if err != nil {
       t.Fatal(err)
     }
-    if res.StatusCode != 204 {
+    if res.StatusCode != 200 {
       t.Fatalf("Wrong statuscode: %d",res.StatusCode)
+    }
+    b := make([]byte,3)
+    if _,err := io.ReadFull(res.Body,b) ; err != nil {
+      t.Fatal(err)
+    }
+    if string(b) != "bar" {
+      t.Fatalf("Expect \"bar\", got %s",string(b))
     }
   }
   cl.Close()
@@ -102,9 +110,9 @@ func TestRealRoundtripper(t *testing.T){
     t.Fatal(err)
   }
   srv := genServer(
-    func(wr http.ResponseWriter,req *http.Request){
+    HttpHandlerFunc(func(wr http.ResponseWriter,req *http.Request){
       wr.WriteHeader(204)
-    },t)
+    }),t)
   go srv.ServeNoClose(l)
   rt := &RoundTripper{Config: &cConf}
   for i := 0 ; i < 10 ; i++ {

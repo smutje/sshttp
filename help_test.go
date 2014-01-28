@@ -8,11 +8,11 @@ import (
   "time"
   "strings"
   "sync"
+  "github.com/smutje/deadlinecond"
 )
 
 var (
   Closed = errors.New("closed")
-  Unsupported = errors.New("deadlines are unsupported")
 )
 
 type fakeAddr string
@@ -31,7 +31,7 @@ const (
 )
 
 type syncBuffer struct {
-  *sync.Cond
+  *deadlinecond.Cond
   buffer bytes.Buffer
   closed bool
 }
@@ -86,14 +86,18 @@ func (p *syncBuffer) IsClosed() bool {
 func newSyncBuffer() *syncBuffer{
   var mux sync.Mutex
   return &syncBuffer{
-    Cond: sync.NewCond(&mux),
+    Cond: deadlinecond.NewCond(&mux),
   }
 }
 
 type pipe struct{
-  io.ReadCloser
+  *syncBuffer
   io.WriteCloser
   addr net.Addr
+}
+
+func (w *pipe) Write(b []byte) (int, error){
+  return w.WriteCloser.Write(b)
 }
 
 func (w *pipe) LocalAddr() net.Addr {
@@ -104,16 +108,17 @@ func (w *pipe) RemoteAddr() net.Addr {
   return w.addr
 }
 func (w *pipe) SetDeadline(t time.Time) error {
-  return Unsupported
+  return w.SetReadDeadline(t)
 }
 func (w *pipe) SetWriteDeadline(t time.Time) error {
-  return Unsupported
+  return nil // writing never times out
 }
 func (w *pipe) SetReadDeadline(t time.Time) error {
-  return Unsupported
+  w.syncBuffer.Cond.SetDeadline(t)
+  return nil
 }
 func (w *pipe) Close() error {
-  w.ReadCloser.Close()
+  w.syncBuffer.Close()
   return w.WriteCloser.Close()
 }
 

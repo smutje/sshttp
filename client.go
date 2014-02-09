@@ -65,7 +65,7 @@ func (rt *ClientRoundTripper) checkout() (ssh.Channel,error) {
     return ch, nil
   default:
     ch, in ,err := rt.Client.OpenChannel("http",nil)
-    go ssh.DiscardIncoming(in)
+    go ssh.DiscardRequests(in)
     return ch, err
   }
 }

@@ -25,7 +25,7 @@ func httpChannel(h http.Handler, srv ServerChannel, nch ssh.NewChannel){
     srv.HandleError(err)
     return
   }
-  go ssh.DiscardIncoming(reqch)
+  go ssh.DiscardRequests(reqch)
   defer ch.Close()
   rd := bufio.NewReader(ch)
   for{

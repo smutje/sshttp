@@ -6,7 +6,12 @@ import (
   "io"
   "os"
   "sync"
+  "errors"
   "code.google.com/p/gosshnew/ssh"
+)
+
+var (
+  DENIED = errors.New("Key denied")
 )
 
 func Dial(conn net.Conn,config *ssh.ClientConfig) (*ssh.Client,error) {
@@ -17,16 +22,28 @@ func Dial(conn net.Conn,config *ssh.ClientConfig) (*ssh.Client,error) {
   return ssh.NewClient(c, chans, reqs), nil
 }
 
-type PublicKeyCallback func(conn ssh.ConnMetadata, algo string, pubkey []byte) bool
+type PublicKeyCallback func(conn ssh.ConnMetadata, pubkey ssh.PublicKey) (*ssh.Permissions,error)
+type HostKeyCallback func(hostname string, remote net.Addr, key ssh.PublicKey) error
 
 func AcceptPublicKey(keys ...ssh.PublicKey) PublicKeyCallback {
-  return func(_ ssh.ConnMetadata, algo string, pubkey []byte) bool {
+  return func(_ ssh.ConnMetadata, pubkey ssh.PublicKey) (*ssh.Permissions,error) {
     for _, key := range(keys) {
-      if key.PublicKeyAlgo() == algo && bytes.Compare(pubkey, key.Marshal()) == 0 {
-        return true
+      if bytes.Compare(pubkey.Marshal(), key.Marshal()) == 0 {
+        return &ssh.Permissions{},nil
       }
     }
-    return false
+    return nil,DENIED
+  }
+}
+
+func AcceptHostKey(keys ...ssh.PublicKey) HostKeyCallback {
+  return func(_ string, _ net.Addr, pubkey ssh.PublicKey ) error{
+    for _, key := range(keys) {
+      if bytes.Compare(pubkey.Marshal(), key.Marshal()) == 0 {
+        return nil
+      }
+    }
+    return DENIED
   }
 }
 
@@ -37,8 +54,8 @@ type AuthorizedKeyFile struct {
   mux sync.Mutex
 }
 
-func (a *AuthorizedKeyFile) Accept(conn ssh.ConnMetadata, algo string, pubkey []byte) bool {
-  return AcceptPublicKey(a.Keys...)(conn, algo, pubkey)
+func (a *AuthorizedKeyFile) Accept(conn ssh.ConnMetadata, pubkey ssh.PublicKey) (*ssh.Permissions,error) {
+  return AcceptPublicKey(a.Keys...)(conn, pubkey)
 }
 
 func (a *AuthorizedKeyFile) Load() error {
@@ -72,7 +89,7 @@ func (a *AuthorizedKeyFile) Load() error {
   return nil
 }
 
-func SignerFromFile(path string) (ssh.Signer, err error){
+func SignerFromFile(path string) (s ssh.Signer, err error){
   file, err := os.Open(path)
   if err != nil {
     return
@@ -84,5 +101,5 @@ func SignerFromFile(path string) (ssh.Signer, err error){
   if err != nil {
     return
   }
-  return ssh.ParsePrivateKey(buf)
+  return ssh.ParsePrivateKey(buf.Bytes())
 }

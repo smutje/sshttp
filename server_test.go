@@ -47,6 +47,7 @@ func init(){
     Auth: []ssh.AuthMethod{
       ssh.PublicKeys(cKey),
     },
+    HostKeyCallback: AcceptHostKey(sKey.PublicKey()),
   }
 }
 

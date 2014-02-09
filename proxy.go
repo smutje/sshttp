@@ -28,7 +28,7 @@ func proxyChannel(backend Connector, srv ServerChannel, nch ssh.NewChannel){
     srv.HandleError(err)
     return
   }
-  go ssh.DiscardIncoming(reqch)
+  go ssh.DiscardRequests(reqch)
   defer dst.Close()
   io.Copy(dst, src)
 }

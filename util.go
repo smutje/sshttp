@@ -71,3 +71,18 @@ func (a *AuthorizedKeyFile) Load() error {
   a.Keys = keys
   return nil
 }
+
+func SignerFromFile(path string) (ssh.Signer, err error){
+  file, err := os.Open(path)
+  if err != nil {
+    return
+  }
+  defer file.Close()
+  r := &io.LimitedReader{ file, 1024 * 1024 }
+  var buf bytes.Buffer
+  _, err = io.Copy(&buf, r)
+  if err != nil {
+    return
+  }
+  return ssh.ParsePrivateKey(buf)
+}
